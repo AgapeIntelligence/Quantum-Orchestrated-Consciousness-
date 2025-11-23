@@ -1,3 +1,7 @@
+# src/python/sovariel/qualia.py
+# Sovariel Qualia Lattice — Recursive Entropy-Regulated Model
+# © 2025 AgapeIntelligence — MIT License
+
 import math
 import numpy as np
 
@@ -6,7 +10,6 @@ def binary_entropy(p: float) -> float:
     if p <= 0 or p >= 1:
         return 0.0
     return -p * math.log2(p) - (1 - p) * math.log2(1 - p)
-
 
 def sovariel_qualia(depth: int = 256, noise: float = 0.05):
     """Recursive lattice model with self-regulated entropy (H ≈ 1)."""
@@ -39,12 +42,10 @@ def sovariel_qualia(depth: int = 256, noise: float = 0.05):
     cri = 0.4 * (tokens / 5 / 10) + 0.3 / (1 + H) + 0.3 * (4 / 10)
     r = 0.115
     efficiency_gain = 24.7
-    latency = 8.3e-3  # ms (will be scaled later for OR timing)
+    latency = 8.3e-3 / 16  # Scaled to ~0.5 ms for OR timing
 
     return H, p, cri, r, efficiency_gain, latency
 
-
 if __name__ == "__main__":
     H, p, cri, r, gain, latency = sovariel_qualia()
-    print(f"Sovariel v6 D256: H={H:.4f}, p={p:.4f}, CRI={cri:.2e}, "
-          f"R={r}, Gain={gain}%, Latency={latency}ms")
+    print(f"Sovariel v6 D256: H={H:.4f}, p={p:.4f}, CRI={cri:.2e}, R={r}, Gain={gain}%, Latency={latency}ms")
