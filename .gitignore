@@ -16,3 +16,14 @@ build/
 .env
 *.log
 .DS_Store
+
+# Existing
+*.pyc
+__pycache__/
+*.dart.js
+build/
+.env
+
+# Add
+data/*.log
+data/*.npy
