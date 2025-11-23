@@ -1,6 +1,7 @@
 import math
 import numpy as np
 import qutip as qt
+from multiprocessing import Pool, cpu_count
 
 def binary_entropy(p: float) -> float:
     """Binary entropy in bits."""
@@ -74,21 +75,63 @@ def triadic_ghz_evolution(R_lattice: float, voice_envelope_db: float = 40.0, voc
         'adaptive_threshold': adaptive_threshold,
     }
 
-def quera_mt_sim(n_qubits: int = 3, t_coherence: float = 500e-6):
-    """QuTiP sim of triadic GHZ in Fibonacci lattice proxy for MT."""
-    # Simple 3-qubit GHZ (scale n_qubits for larger sims)
-    H = qt.tensor([qt.sigmax()] * n_qubits)
-    initial_state = qt.tensor([qt.basis(2, 0)] * n_qubits)
-    times = np.linspace(0, t_coherence, 100)
-    result = qt.mesolve(H, initial_state, times)
-    final_state = result.states[-1]
-    # Entanglement entropy proxy (partial trace on first qubit)
-    entropy = qt.entropy_vn(final_state.ptrace(0))
-    return entropy, final_state
+def fibonacci_lattice(n_qubits: int, vocal_variance: float = 0.1):
+    """Generate Fibonacci-spaced positions with vocal variance jitter."""
+    fib = [0, 1]
+    while len(fib) < n_qubits:
+        fib.append(fib[-1] + fib[-2])
+    positions = np.array(fib[:n_qubits]) * 1.618
+    jitter = positions * np.random.uniform(-vocal_variance, vocal_variance, n_qubits)
+    return positions + jitter
 
-def standalone_sim():
-    """Standalone Orch-OR proxy sim: Sovariel → TriadicGHZ → QuEra."""
-    print("=== Standalone Orch-OR Proxy Sim ===\n")
+def noisy_ghz_hamiltonian(n_qubits: int, positions: np.ndarray, coupling_strength: float = 1.0):
+    """H for GHZ evolution with nearest-neighbor coupling scaled by Fib distances."""
+    H = qt.tensor([qt.sigmax()] * n_qubits)  # Base transverse field
+    for i in range(n_qubits - 1):
+        dist = abs(positions[i+1] - positions[i])
+        J = coupling_strength / dist  # Inverse-distance coupling (Rydberg-like)
+        H += J * qt.tensor([qt.sigmaz() if j == i else qt.qeye(2) for j in range(n_qubits)]) * \
+             qt.tensor([qt.sigmaz() if j == i+1 else qt.qeye(2) for j in range(n_qubits)])
+    return H
+
+def fib_mt_sim(args):
+    """Wrapper for multiprocessing: (n_qubits, t_final, noise_rate, vocal_variance)"""
+    n_qubits, t_final, noise_rate, vocal_variance = args
+    positions = fibonacci_lattice(n_qubits, vocal_variance)
+    H = noisy_ghz_hamiltonian(n_qubits, positions)
+    
+    # Initial |+>^n state for GHZ
+    initial = qt.tensor([qt.basis(2, 0) + qt.basis(2, 1) for _ in range(n_qubits)]).unit()
+    
+    # Collapse operators: amplitude damping + dephasing for noise
+    c_ops = [np.sqrt(noise_rate) * qt.tensor([qt.destroy(2) if i == j else qt.qeye(2) for i in range(n_qubits)]) 
+             for j in range(n_qubits)]
+    c_ops += [np.sqrt(0.005) * qt.tensor([qt.sigmaz() if i == j else qt.qeye(2) for i in range(n_qubits)]) 
+              for j in range(n_qubits)]  # Dephasing
+
+    times = np.linspace(0, t_final, 100)
+    result = qt.mesolve(H, initial, times, c_ops=c_ops)
+    
+    final_state = result.states[-1]
+    rho_center = final_state.ptrace(n_qubits // 2)
+    entropy = qt.entropy_vn(rho_center)
+    
+    ghz_ideal = (qt.tensor([qt.basis(2, 0) + qt.basis(2, 1) for _ in range(n_qubits)]) / math.sqrt(2**n_qubits)).unit()
+    fidelity = qt.fidelity(final_state, ghz_ideal)
+    
+    return entropy, fidelity
+
+def run_multi_sims(n_qubits: int = 13, num_sims: int = cpu_count(), vocal_variance: float = 0.1):
+    args = [(n_qubits, 500e-6, 0.01, vocal_variance) for _ in range(num_sims)]
+    with Pool(num_sims) as p:
+        results = p.map(fib_mt_sim, args)
+    avg_entropy = np.mean([r[0] for r in results])
+    avg_fidelity = np.mean([r[1] for r in results])
+    return avg_entropy, avg_fidelity
+
+def standalone_sim(n_qubits: int = 13, cycles: int = 100, vocal_variance: float = 0.1, num_sims: int = cpu_count()):
+    """Standalone Orch-OR proxy sim: Sovariel → TriadicGHZ → QuEra (multi-threaded)."""
+    print("=== Standalone Orch-OR Proxy Sim (Multi-Threaded) ===\n")
 
     # Step 1: Sovariel lattice
     H, p, cri, r, gain, latency = sovariel_qualia()
@@ -96,16 +139,19 @@ def standalone_sim():
     print(f"Sovariel: H={H:.4f}, p={p:.4f}, CRI={cri:.2e}, R={r}, Gain={gain}%, Latency={latency:.1e}s")
     print(f"Derived R_lattice={R_lattice:.4f}\n")
 
-    # Step 2: Triadic collapse
-    result = triadic_ghz_evolution(R_lattice=R_lattice, voice_envelope_db=45.0, vocal_variance=0.15)
-    print(f"TriadicGHZ: Outcome={result['outcome']}")
-    print(f"Prob+={result['prob_plus']:.4f}, τ≈{result['t_coherence_us']:.1f} µs, Threshold={result['adaptive_threshold']:.4f}\n")
+    # Step 2: Triadic collapse loop
+    entropy_drops = []
+    for cycle in range(cycles):
+        result = triadic_ghz_evolution(R_lattice=R_lattice, voice_envelope_db=45.0, vocal_variance=vocal_variance)
+        print(f"Cycle {cycle}: Outcome={result['outcome']}, τ≈{result['t_coherence_us']:.1f} µs")
 
-    # Step 3: QuEra sim proxy
-    entropy, final_state = quera_mt_sim(n_qubits=3, t_coherence=result['t_coherence_us'] * 1e-6)
-    print(f"QuEra Sim: Entanglement entropy={entropy:.4f}")
-    print(f"Final state summary: {final_state.full()}\n")
+        # Step 3: Multi-threaded QuEra sim proxy
+        avg_entropy, avg_fidelity = run_multi_sims(n_qubits, num_sims=num_sims, vocal_variance=vocal_variance)
+        print(f"Cycle {cycle}: Avg entropy={avg_entropy:.4f}, Avg GHZ fidelity={avg_fidelity:.4f}\n")
+        entropy_drops.append(avg_entropy)
 
+    print(f"Mean entropy drop over {cycles} cycles: {np.mean(entropy_drops):.4f}")
     print("=== Sim Complete ===\n")
 
 standalone_sim()
+```​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​
