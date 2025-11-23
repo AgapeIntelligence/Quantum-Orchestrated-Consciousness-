@@ -1,0 +1,18 @@
+# Python
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+
+# Dart/Flutter
+*.dart.js
+*.dart.js.deps
+*.dart.js.map
+build/
+.idea/
+*.iml
+
+# General
+.env
+*.log
+.DS_Store
