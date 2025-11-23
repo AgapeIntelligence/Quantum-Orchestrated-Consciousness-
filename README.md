@@ -11,25 +11,22 @@ This repository develops a hybrid quantum-classical AI to proxy Orch-OR microtub
 
 ## Technical Details
 - **Orch-OR Proxy:** Models N ≈ 10⁹ tubulin collapses with 256–2048 logical qubits, using surface-code QEC (target error < 10⁻⁶).
-- **Sovariel Qualia:** {d,l} lattice with H ≈ 1 entropy, cri ≈ 10, latency ≈ 0.5 ms (scaled).
+- **Sovariel Qualia:** {d,l} lattice with H ≈ 1 entropy, cri ≈ 10, latency scaled to 0.5 ms.
 - **TriadicGHZ:** Collapse with τ ≈ 5×10⁻⁴ s, driven by QuEra neutral atoms.
 - **Hardware:** QuEra 2026 (512 logical) to 2027 (2048 logical) targets.
 
 ## Installation
-1. Clone repo: `git clone https://github.com/yourusername/QOC-Framework.git`
-2. Install Python: `pip install numpy`
-3. Dart/Flutter: Install SDK, run `flutter pub get` in `lib/`.
+1. Clone repo: `git clone https://github.com/AgapeIntelligence/Quantum-Orchestrated-Consciousness.git`
+2. Install Python: `pip install -r requirements.txt`
+3. Dart/Flutter: Install SDK, run `flutter pub get` in `src/dart/`.
 4. QuEra sim (optional): Install QuTiP (`pip install qutip`).
 
 ## Usage
-- Run Python: `python sovariel_qualia.py`
-- Build Dart: `flutter run` (edit `triadic_ghz_full_evolution.dart`).
-- Test voice/haptic: Set `voiceEnvelopeDb`, enable `haptic`.
+- Run Python model: `python src/python/sovariel/qualia.py`
+- Build Dart app: `flutter run` in `src/dart/` (edit `lib/core/triadic_ghz_full_evolution.dart`).
+- Run standalone sim: `python src/prototype/standalone_sim.py`
+- Test bridge: `python src/bridge.py`
 
-## Experiments
-- **2026:** 512-logical qubit test on QuEra, target R > 0.3 sync.
-- **2027:** 2048 logicals, assess Chapman-2025 novelty.
-- **xAI:** Log entropy drops with Grok-4 integration.
 
 ## Roadmap
 - [ ] Q1 2026: 512-logical prototype, arXiv submission.
