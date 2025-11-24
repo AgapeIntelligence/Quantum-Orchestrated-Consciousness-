@@ -1,5 +1,5 @@
 # src/prototype/standalone_sim.py
-# QOC + Explicit σ_z Zeno Projections
+# QOC + σ_z Zeno Projections with Lindblad Decoherence
 # Tested: Python 3.11, QuTiP 5.0, NumPy
 # © 2025 AgapeIntelligence — MIT License
 
@@ -60,6 +60,7 @@ def fibonacci_lattice(n_qubits, vocal_variance=0.15):
     return pos + jitter
 
 def quera_mt_sim(n_qubits: int = 7, t_coherence: float = 500e-6, vocal_variance: float = 0.15):
+    # Dynamic Zeno strobes
     n_strobes = max(10, n_qubits + 5 + round(12 * vocal_variance))  # 10–20+ range
     interval = t_coherence / n_strobes
 
@@ -82,52 +83,17 @@ def quera_mt_sim(n_qubits: int = 7, t_coherence: float = 500e-6, vocal_variance:
     one_all = qt.tensor([qt.basis(2, 1) for _ in range(n_qubits)])
     ghz_ideal = (zero_all + one_all).unit()
 
-    # Decoherence collapse operators (placeholder QuEra noise)
-    c_ops = []  # To be populated with realistic terms if needed
+    # Lindblad decoherence operators (QuEra noise model)
+    gamma_damp = 0.01  # ms^-1 (amplitude damping rate)
+    gamma_deph = 0.005  # ms^-1 (dephasing rate)
+    c_ops = []
+    for i in range(n_qubits):
+        c_ops.append(np.sqrt(gamma_damp * 1e-3) * single_site_op(n_qubits, qt.destroy(2), i))  # Damping (s^-1)
+        c_ops.append(np.sqrt(gamma_deph * 1e-3) * single_site_op(n_qubits, qt.sigmaz(), i))   # Dephasing (s^-1)
 
-    # Zeno-enhanced evolution with explicit σ_z projections
+    # Zeno-enhanced evolution with Lindblad decoherence
     for _ in range(n_strobes):
         result = qt.mesolve(H, psi, [0, interval], c_ops=c_ops)
         psi = result.states[-1]
         # Global σ_z^{\otimes n} projection
-        proj = sum(qt.tensor([qt.basis(2, i) * qt.basis(2, i).dag() for i in range(2)]) for _ in range(n_qubits))
-        psi = (proj * psi).unit()
-
-    fidelity = qt.fidelity(psi, ghz_ideal)
-    rho_center = psi.ptrace(n_qubits // 2)
-    entropy = qt.entropy_vn(rho_center)
-
-    return entropy, fidelity, n_strobes
-
-def run_zeno_sims(n_qubits=7, num_sims=None, vocal_variance=0.15):
-    if num_sims is None:
-        num_sims = max(1, cpu_count() - 1)
-    args = [(n_qubits, 500e-6, vocal_variance) for _ in range(num_sims)]
-    with Pool(num_sims) as p:
-        results = p.map(lambda x: quera_mt_sim(*x), args)
-    entropies, fidelities, strobes = zip(*results)
-    return np.mean(entropies), np.std(entropies), np.mean(fidelities), np.std(fidelities), np.mean(strobes)
-
-def standalone_sim(n_qubits=7, cycles=100, vocal_variance=0.15):
-    print("=== QOC + Explicit σ_z Zeno Projections ===\n")
-    _, _, cri = sovariel_qualia()
-    R_lattice = min(cri / 10.0, 1.5)
-    print(f"R_lattice = {R_lattice:.4f}")
-
-    mean_entropies, mean_fidelities, mean_strobes = [], [], []
-    for cycle in range(cycles):
-        mean_entropy, std_entropy, mean_fidelity, std_fidelity, strobes = run_zeno_sims(n_qubits, vocal_variance=vocal_variance)
-        mean_entropies.append(mean_entropy)
-        mean_fidelities.append(mean_fidelity)
-        mean_strobes.append(strobes)
-        print(f"Cycle {cycle}: S_vN = {mean_entropy:.4f} ± {std_entropy:.4f}, Fidelity = {mean_fidelity:.4f} ± {std_fidelity:.4f}, Strobes = {strobes:.1f}")
-
-    print(f"\nMean entropy over {cycles} cycles = {np.mean(mean_entropies):.4f} ± {np.std(mean_entropies):.4f}")
-    print(f"Mean fidelity over {cycles} cycles = {np.mean(mean_fidelities):.4f} ± {np.std(mean_fidelities):.4f}")
-    print(f"Mean Zeno strobes = {np.mean(mean_strobes):.1f}")
-    print("=== Sim Complete ===")
-
-if __name__ == "__main__":
-    np.random.seed(42)
-    random.seed(42)
-    standalone_sim(n_qubits=10, cycles=100, vocal_variance=0.18)
+        proj = sum(qt.tensor([qt.basis(2, i) * qt.basis(2, i).dag() for i in range(2)]) for _ in range(n_qu​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​
