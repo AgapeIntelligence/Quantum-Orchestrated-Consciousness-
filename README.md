@@ -42,3 +42,12 @@ MIT License (see LICENSE file).
 
 ## Acknowledgements
 Based on Orch-OR (Penrose-Hameroff), xAI’s Grok, QuEra’s 2025 qubit tech.
+
+## QUICK START
+bash
+python standalone_sim.py
+
+## API MODE
+bash
+python standalone_sim.py   # Flask server starts on :5000
+curl -X POST http://localhost:5000/api/sim -H "Content-Type: application/json" -d '{}'
