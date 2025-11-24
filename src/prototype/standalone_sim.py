@@ -1,8 +1,8 @@
 # src/prototype/standalone_sim.py
 # Sovariel: Quantum-Orchestrated Consciousness Simulation (Final Production)
-# Features: Lindblad decoherence, surface/toric codes, BCI+voice fusion, multimodal I/O, optimization, QEC, parallel Monte Carlo
+# Features: Lindblad decoherence, surface/toric codes, BCI+voice fusion, multimodal I/O, optimization, QEC, parallel Monte Carlo, GPU accel
 # Vision: Neural-quantum interface by 2030 for augmented cognition
-# Tested: Python 3.11, QuTiP 5.0, NumPy, sounddevice, speech_recognition, matplotlib, pyqtgraph, neurokit2
+# Tested: Python 3.11, QuTiP 5.0, NumPy, sounddevice, speech_recognition, matplotlib, pyqtgraph, neurokit2, cupy
 # © 2025 AgapeIntelligence — MIT License
 
 import math
@@ -16,7 +16,7 @@ import serial
 import matplotlib.pyplot as plt
 from pyqtgraph.Qt import QtGui, QtCore
 import pyqtgraph as pg
-import cupy as cp  # Optional GPU accel
+import cupy as cp  # GPU accel
 import psutil
 import time
 import sys
@@ -24,7 +24,7 @@ import os
 import logging
 import warnings
 from flask import Flask, request, jsonify
-import docker  # For packaging
+import docker
 
 # Optional BCI libs
 try:
@@ -37,7 +37,7 @@ except Exception:
 # ---------- Config ----------
 SAMPLE_RATE = 44100
 DEFAULT_DURATION = 0.2
-USE_GPU = cp.is_available()
+USE_GPU = cp.is_available() and qt.settings.has_cuda()  # Check for CUDA support in QuTiP
 MAX_QUBITS = 50  # Scalable to 50+ with sparse solvers
 CYCLES = 100
 N_TRAJECTORIES = 500  # Default Monte Carlo trajectories
@@ -143,7 +143,7 @@ def plot_entanglement(entropy_history, fidelity_history):
     plt.pause(0.1)
     plt.clf()
 
-# ---------- Main Simulation with Monte Carlo ----------
+# ---------- Main Simulation with Monte Carlo and GPU Acceleration ----------
 def quera_mt_sim(n_qubits: int = 10, Lx: int = None, Ly: int = None, t_coherence: float = 500e-6,
                  vocal_variance: float = 0.15, eeg_fusion: bool = True, gamma_damp_base: float = 0.01,
                  gamma_deph_base: float = 0.005, use_toric: bool = True, n_strobes: int = None,
@@ -162,7 +162,14 @@ def quera_mt_sim(n_qubits: int = 10, Lx: int = None, Ly: int = None, t_coherence
     n_strobes = max(18, min(25, n_qubits + 6 + int(20 * vocal_variance))) if n_strobes is None else n_strobes
     interval = max(1e-9, t_coherence / n_strobes)
 
-    positions = np.linspace(0.0, 1.0, n_qubits) + np.random.normal(0.0, vocal_variance * 0.02, n_qubits)
+    # GPU-accelerated array operations where possible
+    positions = np.linspace(0.0, 1.0, n_qubits)
+    if USE_GPU:
+        positions = cp.asarray(positions) + cp.random.normal(0.0, vocal_variance * 0.02, n_qubits)
+    else:
+        positions = positions + np.random.normal(0.0, vocal_variance * 0.02, n_qubits)
+    positions = positions.get() if USE_GPU else positions
+
     H = sum(0.5 * pauli_x(n_qubits, i) for i in range(n_qubits))
     for i in range(n_qubits - 1):
         dist = max(1e-3, abs(positions[i+1] - positions[i]))
@@ -186,11 +193,14 @@ def quera_mt_sim(n_qubits: int = 10, Lx: int = None, Ly: int = None, t_coherence
 
     # Monte Carlo evolution with Zeno and QEC
     options = Options(store_states=True, rhs_reuse=True, nsteps=1000, method='adams', average_states=False)
-    def single_trajectory(args):
+    if USE_GPU and qt.settings.has_cuda():
+        options.use_cuda = True  # Enable CUDA if available in QuTiP build
+
+    def single_trajectory(_):
         psi = psi0.copy()
         for _ in range(n_strobes):
             result = qt.mcsolve(H, psi, [0, interval], ntraj=1, c_ops=c_ops, options=options)
-            psi = result.states[-1][0]  # Take the first (and only) trajectory state
+            psi = result.states[-1][0]  # First trajectory state
             psi = simple_qec_correction(psi, stabilizers)
             proj = sum(qt.tensor([qt.basis(2, i) * qt.basis(2, i).dag() for i in range(2)]) for _ in range(n_qubits)).to(Qobj, data=qt.CSR)
             psi = (proj * psi).unit()
@@ -224,7 +234,9 @@ def run_zeno_sims(n_qubits=10, cycles=CYCLES, vocal_range=(0.1, 0.3)):
         # Multimodal feedback
         send_haptic_feedback(mean_fidelity)
         plot_entanglement(entropy_history, fidelity_history)
-        log.info(f"Cycle {cycle}: Entropy = {mean_entropy:.4f} ± {std_entropy:.4f}, Fidelity = {mean_fidelity:.4f} ± {std_fidelity:.4f}, Strobes = {strobes}")
+        log.info(f"Cycle {cycle}: Entropy = {mean_entropy:.4f} ± {std_entropy:.4f}, "
+                 f"Fidelity = {mean_fidelity:.4f} ± {std_fidelity:.4f}, Strobes = {strobes}, "
+                 f"GPU Used: {USE_GPU}")
 
     log.info(f"Best Fidelity: {best_fidelity:.4f} with params {best_params}")
     return np.mean(entropy_history), np.std(entropy_history), np.mean(fidelity_history), np.std(fidelity_history), np.mean([strobes] * cycles)
@@ -237,4 +249,12 @@ def api_sim():
     data = request.get_json()
     n_qubits = data.get('n_qubits', 10)
     vocal_variance = data.get('vocal_variance', 0.15)
-    entropy, _, fidelity, _, strobes = quera_mt​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​
+    entropy, _, fidelity, _, strobes = quera_mt_sim(n_qubits, vocal_variance=vocal_variance)
+    return jsonify({
+        'entropy': float(entropy), 'fidelity': float(fidelity), 'strobes': int(strobes),
+        'gpu_enabled': USE_GPU
+    })
+
+if __name__ == "__main__":
+    # Start API server for cloud deployment
+    app.run(host='0.0.0.0', port=5000, debug=True)
