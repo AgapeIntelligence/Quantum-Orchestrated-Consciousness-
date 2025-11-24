@@ -164,7 +164,7 @@ def read_eeg_chunk(duration=0.25):
     return np.abs(np.random.normal(0.15, 0.05))
 
 def send_haptic_feedback(value, port='/dev/ttyUSB0', baud=9600):
-    """Send haptic feedback via serial (placeholder)."""
+    """Send haptic feedback via serial (placeholder; extend to UDP if needed)."""
     try:
         with serial.Serial(port, baud, timeout=1) as ser:
             ser.write(f"{int(value*255):03d}\n".encode())
@@ -173,16 +173,24 @@ def send_haptic_feedback(value, port='/dev/ttyUSB0', baud=9600):
         log.warning(f"Haptic feedback failed: {e}")
 
 def plot_entanglement(entropy_history, fidelity_history):
-    """Plot entanglement metrics in real-time."""
-    plt.figure(figsize=(10, 6))
-    plt.plot(entropy_history, label='Entropy (von Neumann)')
-    plt.plot(fidelity_history, label='Fidelity vs GHZ')
-    plt.legend()
-    plt.title("Sovariel Simulation Metrics")
-    plt.xlabel("Cycle")
-    plt.ylabel("Value")
-    plt.pause(0.1)
-    plt.clf()
+    """Plot entanglement metrics in real-time using pyqtgraph."""
+    app = QtGui.QApplication([])
+    win = pg.GraphicsWindow(title="Sovariel Simulation Metrics")
+    win.resize(1000, 600)
+    p1 = win.addPlot(title="Entropy (von Neumann)")
+    p2 = win.addPlot(title="Fidelity vs GHZ")
+    curve_entropy = p1.plot(pen='r')
+    curve_fidelity = p2.plot(pen='b')
+
+    def update():
+        curve_entropy.setData(entropy_history)
+        curve_fidelity.setData(fidelity_history)
+        QtGui.QApplication.processEvents()
+
+    timer = QtCore.QTimer()
+    timer.timeout.connect(update)
+    timer.start(100)  # Update every 100ms
+    return app, win
 
 # ---------- Main Simulation ----------
 def quera_mt_sim(n_qubits: int = 10, Lx: int = None, Ly: int = None, t_coherence: float = 500e-6,
@@ -248,16 +256,82 @@ def quera_mt_sim(n_qubits: int = 10, Lx: int = None, Ly: int = None, t_coherence
     return entropy, fidelity, n_strobes
 
 # ---------- Batch Runner with Optimization ----------
-def run_zeno_sims(n_qubits=10, cycles=CYCLES, vocal_range=(0.1, 0.3)):
+def run_zeno_sims(n_qubits=10, cycles=CYCLES, vocal_range=(0.1, 0.3), eeg_fusion=True, use_gpu=USE_GPU):
     entropy_history, fidelity_history = [], []
     best_fidelity = -1
     best_params = {}
 
-    for _ in range(cycles):
-        # Auto-sweep vocal_variance
-        vocal_variance = np.random.uniform(*vocal_range)
-        entropy, fidelity, strobes = quera_mt_sim(n_qubits, vocal_variance=vocal_variance)
+    # Memory profiling
+    process = psutil.Process()
+    memory_limit = psutil.virtual_memory().available * 0.8  # Use 80% of available RAM
+    log.info(f"Memory limit: {memory_limit / 1024**3:.2f} GB")
+
+    # Parallel execution pool
+    n_cores = min(cpu_count(), cycles)
+    pool = Pool(processes=n_cores)
+
+    # Parameter sweep
+    def run_single_sim(args):
+        vocal_variance = args[0]
+        eeg_var = read_eeg_chunk() if eeg_fusion and NK_AVAILABLE else 0.0
+        fusion_factor = 1.0 + vocal_variance + 0.5 * eeg_var
+        try:
+            entropy, fidelity, n_strobes = quera_mt_sim(
+                n_qubits=n_qubits,
+                vocal_variance=vocal_variance,
+                eeg_fusion=eeg_fusion,
+                gamma_damp_base=0.01 * fusion_factor,
+                gamma_deph_base=0.005 * fusion_factor
+            )
+            return entropy, fidelity, vocal_variance, n_strobes
+        except MemoryError:
+            log.error(f"MemoryError at n_qubits={n_qubits}, vocal_variance={vocal_variance}")
+            return float('nan'), float('nan'), vocal_variance, 0
+
+    # Generate parameter sets
+    param_sets = [(np.random.uniform(*vocal_range),) for _ in range(cycles)]
+    results = pool.map(run_single_sim, param_sets)
+
+    # Process results
+    for entropy, fidelity, vocal_variance, n_strobes in results:
+        if not np.isnan(fidelity) and fidelity > best_fidelity:
+            best_fidelity = fidelity
+            best_params = {'vocal_variance': vocal_variance, 'n_strobes': n_strobes}
         entropy_history.append(entropy)
         fidelity_history.append(fidelity)
 
-       ​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​
+    # GPU offload if enabled and n_qubits > 14
+    if use_gpu and n_qubits > MAX_SAFE_QUBITS:
+        H_gpu = cp.asarray(H.data.toarray()) if 'H' in locals() else None
+        if H_gpu is not None:
+            log.info("Offloading Hamiltonian to GPU")
+            # Note: Full GPU integration requires rewriting mesolve with CuPy, pending QuTiP GPU support
+
+    # Multimodal output
+    send_haptic_feedback(best_fidelity)  # Serial haptic feedback
+    app, win = plot_entanglement(entropy_history, fidelity_history)  # Real-time graph
+
+    # Log results
+    log.info(f"Best Fidelity: {best_fidelity:.4f} with params {best_params}")
+    return entropy_history, fidelity_history, best_params, app, win
+
+# ---------- Main Execution ----------
+if __name__ == "__main__":
+    # Test with n_qubits=10
+    n_qubits_test = 10
+    log.info(f"Starting simulation with n_qubits={n_qubits_test}")
+    entropy_hist, fidelity_hist, best_params, app, win = run_zeno_sims(n_qubits=n_qubits_test, cycles=CYCLES, eeg_fusion=NK_AVAILABLE)
+    
+    # Advanced sims: Quantum Error Correction with surface codes
+    Lx, Ly = int(np.sqrt(n_qubits_test)), int(np.ceil(n_qubits_test / np.sqrt(n_qubits_test)))
+    stabilizers = build_surface_code_stabilizers(Lx, Ly, toric=True)
+    log.info(f"Surface code stabilizers built for {Lx}x{Ly} lattice")
+
+    # Vision: Multi-threaded consciousness modeling (placeholder for future expansion)
+    if cpu_count() > 1:
+        log.info(f"Multi-threading enabled with {cpu_count()} cores")
+        # Placeholder for multi-threaded quera_mt_sim expansion
+
+    # Keep plot window open
+    if app and win:
+        QtGui.QApplication.instance().exec_()
