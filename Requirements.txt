@@ -1,10 +1,28 @@
-numpy>=1.26.0
-qutip>=5.0.0
-sounddevice>=0.5.3
-speechrecognition>=3.10.0
-pyserial>=3.5
-matplotlib>=3.8.0
-pyqtgraph>=0.13.3
-cupy>=12.0.0  # Optional GPU accel
-neurokit2>=0.2.5  # For BCI
-docker>=6.1.3  # For packaging
+# Sovariel 2025 — Official requirements (November 2025)
+# Tested & working together on Python 3.11–3.12
+
+numpy==2.1.3
+scipy==1.14.1
+qutip==5.1.0            # Latest with full CUDA support + performance fixes
+cupy-cuda12x==13.3.0    # Best-in-class GPU acceleration (CUDA 12.1–12.6)
+# cupy-cuda11x==13.3.0  # Uncomment if you're still on CUDA 11
+
+sounddevice==0.5.1
+SpeechRecognition==3.11.0
+pyserial==3.5
+
+matplotlib==3.9.2
+pyqtgraph==0.13.7
+
+neurokit2==0.2.9        # Full EEG/BVP/EDA simulation + real device support
+psutil==6.1.0
+
+Flask==3.1.0
+gunicorn==23.0.0        # Production WSGI server (recommended for Docker)
+
+# Docker packaging (only needed locally or in CI, not inside container)
+docker==7.1.0
+
+# Optional: for VR state export & 3D visualization
+# open3d==0.18.0
+# trimesh==4.0.10
