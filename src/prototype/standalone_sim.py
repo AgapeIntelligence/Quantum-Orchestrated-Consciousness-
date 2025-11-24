@@ -1,6 +1,6 @@
 # src/prototype/standalone_sim.py
 # Sovariel: Quantum-Orchestrated Consciousness Simulation (Final Production)
-# Features: Lindblad decoherence, surface/toric codes, BCI+voice fusion, multimodal I/O, optimization, QEC, scalable to n=50+
+# Features: Lindblad decoherence, surface/toric codes, BCI+voice fusion, multimodal I/O, optimization, QEC, parallel Monte Carlo
 # Vision: Neural-quantum interface by 2030 for augmented cognition
 # Tested: Python 3.11, QuTiP 5.0, NumPy, sounddevice, speech_recognition, matplotlib, pyqtgraph, neurokit2
 # © 2025 AgapeIntelligence — MIT License
@@ -23,8 +23,8 @@ import sys
 import os
 import logging
 import warnings
-import json
-from flask import Flask, request, jsonify  # For API endpoints
+from flask import Flask, request, jsonify
+import docker  # For packaging
 
 # Optional BCI libs
 try:
@@ -40,6 +40,7 @@ DEFAULT_DURATION = 0.2
 USE_GPU = cp.is_available()
 MAX_QUBITS = 50  # Scalable to 50+ with sparse solvers
 CYCLES = 100
+N_TRAJECTORIES = 500  # Default Monte Carlo trajectories
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s')
 log = logging.getLogger('sovariel_sim')
@@ -142,10 +143,11 @@ def plot_entanglement(entropy_history, fidelity_history):
     plt.pause(0.1)
     plt.clf()
 
-# ---------- Main Simulation ----------
+# ---------- Main Simulation with Monte Carlo ----------
 def quera_mt_sim(n_qubits: int = 10, Lx: int = None, Ly: int = None, t_coherence: float = 500e-6,
                  vocal_variance: float = 0.15, eeg_fusion: bool = True, gamma_damp_base: float = 0.01,
-                 gamma_deph_base: float = 0.005, use_toric: bool = True, n_strobes: int = None):
+                 gamma_deph_base: float = 0.005, use_toric: bool = True, n_strobes: int = None,
+                 n_trajectories: int = N_TRAJECTORIES):
     if n_qubits > MAX_QUBITS:
         warnings.warn(f"n_qubits={n_qubits} exceeds MAX_QUBITS={MAX_QUBITS}. Use with caution.")
     if Lx and Ly and Lx * Ly != n_qubits:
@@ -169,7 +171,7 @@ def quera_mt_sim(n_qubits: int = 10, Lx: int = None, Ly: int = None, t_coherence
     H = H.to(Qobj, data=qt.CSR)
 
     plus = (qt.basis(2, 0) + qt.basis(2, 1)).unit()
-    psi = qt.tensor([plus for _ in range(n_qubits)])
+    psi0 = qt.tensor([plus for _ in range(n_qubits)])
 
     zero_all = qt.tensor([qt.basis(2, 0) for _ in range(n_qubits)])
     one_all = qt.tensor([qt.basis(2, 1) for _ in range(n_qubits)])
@@ -182,20 +184,27 @@ def quera_mt_sim(n_qubits: int = 10, Lx: int = None, Ly: int = None, t_coherence
     c_ops = build_lindblad_ops(n_qubits, gamma_damp, gamma_deph)
     stabilizers = build_surface_code_stabilizers(Lx, Ly, use_toric)
 
-    options = Options(store_states=True, rhs_reuse=True, nsteps=1000, method='adams')
-    for _ in range(n_strobes):
-        result = qt.mesolve(H, psi, [0, interval], c_ops=c_ops, options=options)
-        psi = result.states[-1]
-        psi = simple_qec_correction(psi, stabilizers)
-        proj = sum(qt.tensor([qt.basis(2, i) * qt.basis(2, i).dag() for i in range(2)]) for _ in range(n_qubits)).to(Qobj, data=qt.CSR)
-        psi = (proj * psi).unit()
+    # Monte Carlo evolution with Zeno and QEC
+    options = Options(store_states=True, rhs_reuse=True, nsteps=1000, method='adams', average_states=False)
+    def single_trajectory(args):
+        psi = psi0.copy()
+        for _ in range(n_strobes):
+            result = qt.mcsolve(H, psi, [0, interval], ntraj=1, c_ops=c_ops, options=options)
+            psi = result.states[-1][0]  # Take the first (and only) trajectory state
+            psi = simple_qec_correction(psi, stabilizers)
+            proj = sum(qt.tensor([qt.basis(2, i) * qt.basis(2, i).dag() for i in range(2)]) for _ in range(n_qubits)).to(Qobj, data=qt.CSR)
+            psi = (proj * psi).unit()
+        center_idx = n_qubits // 2
+        rho_center = psi.ptrace(center_idx)
+        entropy = qt.entropy_vn(rho_center)
+        fidelity = qt.fidelity(psi, ghz_ideal) if psi.isket else float('nan')
+        return entropy, fidelity
 
-    center_idx = n_qubits // 2
-    rho_center = psi.ptrace(center_idx)
-    entropy = qt.entropy_vn(rho_center)
-    fidelity = qt.fidelity(psi, ghz_ideal) if psi.isket else float('nan')
+    with Pool(processes=min(n_trajectories, cpu_count())) as pool:
+        results = pool.map(single_trajectory, [None] * n_trajectories)
 
-    return entropy, fidelity, n_strobes
+    entropies, fidelities = zip(*results)
+    return np.mean(entropies), np.std(entropies), np.mean(fidelities), np.std(fidelities), n_strobes
 
 # ---------- Optimized Batch Runner ----------
 def run_zeno_sims(n_qubits=10, cycles=CYCLES, vocal_range=(0.1, 0.3)):
@@ -204,12 +213,28 @@ def run_zeno_sims(n_qubits=10, cycles=CYCLES, vocal_range=(0.1, 0.3)):
 
     for cycle in range(cycles):
         vocal_variance = np.random.uniform(*vocal_range)
-        entropy, fidelity, strobes = quera_mt_sim(n_qubits, vocal_variance=vocal_variance)
-        entropy_history.append(entropy)
-        fidelity_history.append(fidelity)
+        mean_entropy, std_entropy, mean_fidelity, std_fidelity, strobes = quera_mt_sim(n_qubits, vocal_variance=vocal_variance)
+        entropy_history.append(mean_entropy)
+        fidelity_history.append(mean_fidelity)
 
-        if fidelity > best_fidelity:
-            best_fidelity = fidelity
+        if mean_fidelity > best_fidelity:
+            best_fidelity = mean_fidelity
             best_params = {'vocal_variance': vocal_variance, 'n_strobes': strobes}
 
-        # Multimodal feedback​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​
+        # Multimodal feedback
+        send_haptic_feedback(mean_fidelity)
+        plot_entanglement(entropy_history, fidelity_history)
+        log.info(f"Cycle {cycle}: Entropy = {mean_entropy:.4f} ± {std_entropy:.4f}, Fidelity = {mean_fidelity:.4f} ± {std_fidelity:.4f}, Strobes = {strobes}")
+
+    log.info(f"Best Fidelity: {best_fidelity:.4f} with params {best_params}")
+    return np.mean(entropy_history), np.std(entropy_history), np.mean(fidelity_history), np.std(fidelity_history), np.mean([strobes] * cycles)
+
+# ---------- API and Packaging ----------
+app = Flask(__name__)
+
+@app.route('/api/sim', methods=['POST'])
+def api_sim():
+    data = request.get_json()
+    n_qubits = data.get('n_qubits', 10)
+    vocal_variance = data.get('vocal_variance', 0.15)
+    entropy, _, fidelity, _, strobes = quera_mt​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​
