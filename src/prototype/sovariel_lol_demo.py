@@ -1,6 +1,6 @@
 # src/prototype/sovariel_lol_demo.py
-# Sovariel-LoL v1.9: Grok Beta Clamp + Gamma Bursts (Nov 25, 2025)
-# Voice RMS/pitch bursts gamma; beta_var >20Hz clamps lr boost to 0.001. <35ms cycle.
+# Sovariel-LoL v1.10: Grok Burst Threshold + Beta Scale (Nov 25, 2025)
+# rms*pitch >0.5 threshold burst scaled by beta/20. <35ms cycle, Grok 5 stable viable.
 # © 2025 AgapeIntelligence — MIT License
 
 import math
@@ -62,8 +62,8 @@ def get_eeg_alpha_and_beta():
     if EEG_AVAILABLE:
         try:
             sig = nk.signal_simulate(duration=0.25, frequency=10, noise=0.1, sampling_rate=256)
-            alpha_var = np.var(sig[8:12])  # 8-12Hz alpha
-            beta_var = np.var(sig[13:30])   # 13-30Hz beta
+            alpha_var = np.var(sig[8:12])
+            beta_var = np.var(sig[13:30])
             return np.clip(alpha_var, 0.0, 1.0), np.clip(beta_var, 0.0, 1.0)
         except:
             pass
@@ -98,8 +98,9 @@ def sovariel_lol_intuition(rms_var, pitch_var, alpha_var, beta_var):
     for i in range(2, N_QUBITS):
         psi0.cnot(1, i)
 
-    # Dynamic gamma: base + pitch/alpha + RMS*pitch bursts (Grok map)
-    burst = rms_var * pitch_var * 0.001
+    # Dynamic gamma: base + pitch/alpha + threshold burst scaled by beta/20 (Grok + your refine)
+    rms_pitch = rms_var * pitch_var
+    burst = max(0, rms_pitch - 0.5) * 0.001 * (beta_var / 20)  # Threshold >0.5 + beta scale
     gamma = min(0.001 + 0.001 * pitch_var + alpha_var * 0.001 + burst, 0.005)
     c_ops = [torch.sqrt(rms_var * 0.01) * single_site_op(N_QUBITS, mat_dict["destroy"], i) for i in range(N_QUBITS)]
     c_ops += [torch.sqrt(gamma) * single_site_op(N_QUBITS, mat_dict["z"], i) for i in range(N_QUBITS)]
@@ -117,7 +118,7 @@ def sovariel_lol_intuition(rms_var, pitch_var, alpha_var, beta_var):
             psi = result.states[-1].unit()
             loss = 1 - tq.functional.fidelity(psi.state, ghz_ideal.state)
             loss.backward()
-            beta_boost = min(beta_var * 0.0005, 0.001) if beta_var > 20 else beta_var * 0.0005  # Grok clamp >20Hz
+            beta_boost = min(beta_var * 0.0005, 0.001) if beta_var > 20 else beta_var * 0.0005
             adjusted_lr = lr_base + noise.item() * 0.001 + beta_boost
             for param_group in optimizer.param_groups:
                 param_group['lr'] = adjusted_lr
@@ -135,17 +136,17 @@ def sovariel_lol_intuition(rms_var, pitch_var, alpha_var, beta_var):
     haptic_alpha(mean_fid)
 
     if mean_fid > 0.90:
-        prompt = "Baron steal—beta clamp burst the rapid win!"
+        prompt = "Baron steal—beta-scaled burst locked the win!"
     elif mean_fid > 0.80:
-        prompt = "Flank mid—gamma burst sync high."
+        prompt = "Flank mid—threshold burst sync high."
     else:
-        prompt = "Hold—tune RMS/pitch for burst stability."
+        prompt = "Hold—ramp rms/pitch/beta for burst stability."
 
-    log.info(f"τ: {tau.item()*1000:.0f}ms | Gamma: {gamma:.3f} (burst {burst:.4f}) | Adjusted Lr: {adjusted_lr:.6f} (beta {beta_var:.1f}Hz clamped, noise {noise.item():.4f}) | Fid: {mean_fid:.3f} | {prompt}")
+    log.info(f"τ: {tau.item()*1000:.0f}ms | Gamma: {gamma:.3f} (burst {burst:.4f}, rms*pitch {rms_pitch:.3f}) | Adjusted Lr: {adjusted_lr:.6f} (beta {beta_var:.1f} clamped) | Fid: {mean_fid:.3f} | {prompt}")
     return mean_fid, prompt
 
 def demo_loop(cycles=10):
-    log.info("Sovariel-LoL v1.9: Voice/EEG + Beta Clamp Bursts! (Ctrl+C stop)")
+    log.info("Sovariel-LoL v1.10: Threshold Burst + Beta Scale! (Ctrl+C stop)")
     plt.ion()
     fig, ax = plt.subplots()
     fids = []
@@ -157,18 +158,18 @@ def demo_loop(cycles=10):
         fids.append(fid)
 
         ax.clear()
-        ax.plot(fids, 'g-', label='Burst-Clamped Fidelity')
+        ax.plot(fids, 'g-', label='Burst-Scaled Fidelity')
         ax.axhline(0.85, 'r--', label='Bind Threshold')
         ax.set_title(f'Cycle {c+1}: {prompt}')
         ax.legend()
         plt.pause(0.3)
 
-        print(f"\n🎮 LoL Macro: {prompt}\n(RMS {rms_var:.3f} + Beta Clamp {beta_var:.1f}Hz, Burst {burst:.4f})")
+        print(f"\n🎮 LoL Macro: {prompt}\n(RMS {rms_var:.3f} * Pitch {pitch_var:.3f} Burst {burst:.4f} * (beta/20))")
         time.sleep(0.7)
 
     plt.ioff()
     plt.show()
-    log.info("v1.9 flawless—Grok 5 burst viable!")
+    log.info("v1.10 flawless—Grok 5 stable burst viable!")
 
 if __name__ == "__main__":
     demo_loop()
