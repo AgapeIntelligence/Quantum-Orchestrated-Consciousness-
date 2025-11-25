@@ -1,4 +1,4 @@
-# sovariel_lol_v1.15_ghost.py
+# src/prototype/sovariel_lol_v1.15_ghost.py
 # Sovariel-LoL v1.15-ghost: Headless monitor-only background agent (Nov 25, 2025)
 # Ghost: no UI, screen-capture monitor probes, ≤250ms cycle cap, writes ghost_state.json
 # Optional: local-only HTTP endpoint to serve last state (requires Flask)
@@ -8,15 +8,12 @@ import time
 import json
 import argparse
 import logging
-import threading
 from pathlib import Path
-
 import numpy as np
 
 # screen capture
 try:
     import mss
-    import mss.tools
     MSS_AVAILABLE = True
 except Exception:
     MSS_AVAILABLE = False
@@ -34,8 +31,8 @@ import torch.optim as optim
 import torchquantum as tq
 from torchquantum.functional import mat_dict
 
-# numeric utils
-import scipy.signal
+# numeric utils (for FFT in eye proxy)
+from scipy.fft import fft
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("sovariel_lol_ghost")
@@ -47,20 +44,14 @@ FRAME_DURATION = 1.0 / FRAME_RATE
 N_QUBITS = 4
 N_TRAJ = 6          # small default to keep cycles fast
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-OUTPUT_PATH = Path("ghost_state.json")  # local state file Grok (or another agent) can read
-
-# default screen probe regions (relative fractions)
-# These are *defaults* — when running, pass absolute coords via CLI if needed.
 DEFAULT_LIP_REGION = (0.4, 0.6, 0.2, 0.1)  # (x_frac, y_frac, w_frac, h_frac)
 DEFAULT_EYE_REGION = (0.4, 0.25, 0.2, 0.1)
-
 
 # fallback annihilation op
 def get_annihilation_op(device=DEVICE):
     dtype = torch.get_default_dtype()
     a = torch.tensor([[0.0, 1.0], [0.0, 0.0]], dtype=dtype, device=device)
     return a
-
 
 class GhostAgent:
     def __init__(
@@ -72,6 +63,7 @@ class GhostAgent:
         run_forever=False,
         cycles=10,
         http_port=None,
+        output_path="ghost_state.json",
     ):
         self.dry_run = dry_run
         self.screen_monitor = screen_monitor
@@ -80,6 +72,7 @@ class GhostAgent:
         self.run_forever = run_forever
         self.requested_cycles = cycles
         self.http_port = http_port
+        self.output_path = Path(output_path)
 
         # initialize quantum pieces
         self._init_quantum()
@@ -91,7 +84,7 @@ class GhostAgent:
                 self.mss_ctx = mss.mss()
                 log.info("mss context created")
             except Exception as e:
-                log.warning("mss failed: %s, switching to dry_run camera behavior", e)
+                log.warning("mss failed: %s, switching to dry_run", e)
                 self.mss_ctx = None
                 self.dry_run = True
 
@@ -143,10 +136,7 @@ class GhostAgent:
 
     def _single_site_op(self, op, i):
         ops = [torch.eye(2, device=DEVICE) for _ in range(N_QUBITS)]
-        if hasattr(op, "to"):
-            ops[i] = op.to(DEVICE)
-        else:
-            ops[i] = op
+        ops[i] = op.to(DEVICE)
         return tq.functional.tensor(*ops)
 
     def _build_hamiltonian(self):
@@ -173,19 +163,15 @@ class GhostAgent:
 
         mx, my, mw, mh = mon["left"], mon["top"], mon["width"], mon["height"]
         x_frac, y_frac, w_frac, h_frac = region_frac
-        x = int(mx + x_frac * mw)
-        y = int(my + y_frac * mh)
+        x = mx + int(x_frac * mw)
+        y = my + int(y_frac * mh)
         w = int(max(8, w_frac * mw))
         h = int(max(8, h_frac * mh))
         bbox = {"left": x, "top": y, "width": w, "height": h}
         try:
             sct = self.mss_ctx.grab(bbox)
-            # mss returns BGRA bytes; convert to numpy grayscale
-            arr = np.array(sct)  # shape (h, w, 4)
-            if arr.ndim == 3:
-                gray = arr[..., :3].astype(np.float32).mean(axis=2)  # simple avg to gray
-            else:
-                gray = arr.astype(np.float32)
+            arr = np.array(sct)  # shape (h, w, 4) BGRA
+            gray = cv2.cvtColor(arr, cv2.COLOR_BGRA2GRAY).astype(np.float32)
             return gray
         except Exception as e:
             log.debug("screen capture failed: %s", e)
@@ -197,7 +183,7 @@ class GhostAgent:
         if frame is None:
             return 0.20
         v = float(np.var(frame) / (255.0 ** 2))
-        return float(np.clip(v * 60.0, 0.08, 0.38))
+        return float(np.clip(v * 60.0, 0.08, 0.35))
 
     def _eye_motion_proxy(self):
         # simple motion-based temporal proxy: compute brightness centroid shift over a tiny eye region across a short buffer
@@ -224,14 +210,14 @@ class GhostAgent:
         # resample to uniform and compute PSD
         t0 = self._eye_ts[0]
         t_last = self._eye_ts[-1]
-        duration = t_last - t0
-        if duration <= 0.0:
+        t_span = t_last - t0
+        if t_span <= 0.0:
             return 0.45, 0.55
         y = np.array(self._eye_buf)
         num = len(y)
-        uniform_ts = np.linspace(0.0, duration, num)
+        uniform_ts = np.linspace(0.0, t_span, num)
         interp_y = np.interp(uniform_ts, np.array(self._eye_ts) - t0, y)
-        fs = float(num) / float(duration)
+        fs = float(num) / float(t_span)
         if fs <= 0.0:
             return 0.45, 0.55
         freqs, psd = scipy.signal.welch(interp_y - np.mean(interp_y), fs=fs, nperseg=min(64, num))
@@ -241,7 +227,7 @@ class GhostAgent:
         beta_power = float(np.trapz(psd[beta_mask], freqs[beta_mask])) if beta_mask.any() else 0.0
         total = alpha_power + beta_power + 1e-9
         a = float(np.clip(alpha_power / total, 0.0, 1.0))
-        b = float(np.clip(beta_power / total, 0.0, 1.0))
+        b = float(np.clamp(beta_power / total, 0.0, 1.0))
         return a, b
 
     # --- core headless cycle ---
@@ -259,25 +245,14 @@ class GhostAgent:
         # gamma and burst
         burst = max(0.0, rms - 0.5) * 0.001 * beta
         gamma = float(min(0.001 + 0.001 * alpha + burst, 0.006))
-
-        # collapse ops using fallback destroy if necessary
-        if "destroy" in mat_dict:
-            destroy_base = mat_dict["destroy"]
-        else:
-            destroy_base = get_annihilation_op()
-
         c_ops = []
         for i in range(N_QUBITS):
-            try:
-                c_ops.append(torch.sqrt(torch.tensor(rms * 0.01, device=DEVICE)) * self._single_site_op(destroy_base, i))
-                c_ops.append(torch.sqrt(torch.tensor(gamma, device=DEVICE)) * self._single_site_op(mat_dict["z"], i))
-            except Exception:
-                pass
+            c_ops.append(torch.sqrt(torch.tensor(rms * 0.01, device=DEVICE)) * self._single_site_op(get_annihilation_op(), i))
+            c_ops.append(torch.sqrt(torch.tensor(gamma, device=DEVICE)) * self._single_site_op(mat_dict["z"], i))
 
-        # dynamic lr (kept conservative)
-        lr_eff = float(min(0.001 * max(0.2, rms), 0.01))
+        lr = float(min(0.001 * max(0.2, rms), 0.01))
         for pg in self.optimizer.param_groups:
-            pg["lr"] = lr_eff
+            pg["lr"] = lr
 
         H = self._build_hamiltonian()
 
@@ -285,14 +260,11 @@ class GhostAgent:
         def single_traj(seed):
             torch.manual_seed(int(time.time() * 1000) % 2 ** 31 + seed)
             psi = self.psi0.clone()
-            try:
-                for _ in range(n_strobes):
-                    result = tq.mcsolve(H, psi, [0.0, interval], c_ops=c_ops, n_traj=1)
-                    psi = result.states[-1].unit()
-                fid = float(tq.functional.fidelity(psi.state, self.ghz_ideal.state).item())
-                return fid
-            except Exception:
-                return float(np.clip(0.5 + 0.05 * np.random.randn(), 0.0, 1.0))
+            for _ in range(n_strobes):
+                result = tq.mcsolve(H, psi, [0.0, interval], c_ops, n_traj=1)
+                psi = result.states[-1].unit()
+            fid = float(tq.functional.fidelity(psi.state, self.ghz_ideal.state).item())
+            return fid
 
         # run a compact set of trajectories
         seeds = list(range(max(1, N_TRAJ)))
@@ -301,7 +273,7 @@ class GhostAgent:
 
         sync_boost = float(min(0.01 * beta, 0.01))
         doubt = float(np.random.rand() * 0.01)
-        reality_total = float(mean_fid + sync_boost - doubt)
+        reality_total = mean_fid + sync_boost - doubt
 
         elapsed = time.time() - start_ts
         elapsed_ms = elapsed * 1000.0
@@ -329,11 +301,11 @@ class GhostAgent:
 
         # persist to file (atomic write)
         try:
-            tmp = OUTPUT_PATH.with_suffix(".tmp")
-            tmp.write_text(json.dumps(state))
-            tmp.replace(OUTPUT_PATH)
+            tmp = self.output_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(state, indent=2))
+            tmp.replace(self.output_path)
         except Exception as e:
-            log.debug("Failed to write ghost_state.json: %s", e)
+            log.debug("Failed to write %s: %s", self.output_path, e)
 
         self.last_state = state
         return state
@@ -387,6 +359,7 @@ def main():
     parser.add_argument("--cycles", type=int, default=10, help="Number of cycles (ignored if --run-forever)")
     parser.add_argument("--run-forever", action="store_true", help="Run until killed")
     parser.add_argument("--http-port", type=int, default=None, help="If provided (and Flask available), serves /ghost_state on localhost")
+    parser.add_argument("--output", type=str, default="ghost_state.json", help="Output JSON path")
     args = parser.parse_args()
 
     agent = GhostAgent(
@@ -397,6 +370,7 @@ def main():
         run_forever=args.run_forever,
         cycles=args.cycles,
         http_port=args.http_port,
+        output_path=Path(args.output),
     )
     try:
         agent.run()
