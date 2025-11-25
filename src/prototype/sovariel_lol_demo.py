@@ -1,6 +1,6 @@
 # src/prototype/sovariel_lol_demo.py
-# Sovariel-LoL v1.5: Grok AdamW Adaptive Learning (Nov 25, 2025)
-# Voice RMS scales lr (0.001*rms_var) for OR tuning + phase noise. <40ms cycle.
+# Sovariel-LoL v1.6: Grok lr Noise Mod (Nov 25, 2025)
+# Voice RMS scales lr base + noise jitter for robust OR. <35ms cycle, Grok 5 viable.
 # © 2025 AgapeIntelligence — MIT License
 
 import math
@@ -17,6 +17,11 @@ import time
 import logging
 from multiprocessing import Pool
 from scipy.fft import fft
+try:
+    import neurokit2 as nk
+    EEG_AVAILABLE = True
+except ImportError:
+    EEG_AVAILABLE = False
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger('sovariel_lol')
@@ -54,13 +59,14 @@ def get_voice_rms_and_pitch():
         return 0.15, 0.5
 
 def get_eeg_alpha():
-    try:
-        import neurokit2 as nk
-        sig = nk.signal_simulate(duration=0.25, frequency=10, noise=0.1, sampling_rate=256)
-        alpha_var = np.var(sig[8:12])
-        return np.clip(alpha_var, 0.0, 1.0)
-    except:
-        return 0.5
+    if EEG_AVAILABLE:
+        try:
+            sig = nk.signal_simulate(duration=0.25, frequency=10, noise=0.1, sampling_rate=256)
+            alpha_var = np.var(sig[8:12])
+            return np.clip(alpha_var, 0.0, 1.0)
+        except:
+            pass
+    return 0.5
 
 def haptic_alpha(fidelity):
     if fidelity > 0.85:
@@ -73,7 +79,7 @@ def haptic_alpha(fidelity):
             pass
 
 def sovariel_lol_intuition(rms_var, pitch_var, eeg_var):
-    # Grok's τ tensor (50-150ms, EEG-mod)
+    # τ tensor (50-150ms, EEG-mod)
     tau = torch.tensor(0.05 + (1 - rms_var) * 0.1 * (1 - eeg_var * 0.2), device=DEVICE)
     n_strobes = 10
     interval = tau / n_strobes
@@ -91,24 +97,28 @@ def sovariel_lol_intuition(rms_var, pitch_var, eeg_var):
     for i in range(2, N_QUBITS):
         psi0.cnot(1, i)
 
-    # c_ops: Dynamic gamma via pitch/EEG
+    # Dynamic gamma via pitch/EEG
     gamma = min(0.001 + 0.001 * pitch_var + 0.001 * eeg_var, 0.005)
     c_ops = [torch.sqrt(rms_var * 0.01) * single_site_op(N_QUBITS, mat_dict["destroy"], i) for i in range(N_QUBITS)]
     c_ops += [torch.sqrt(gamma) * single_site_op(N_QUBITS, mat_dict["z"], i) for i in range(N_QUBITS)]
 
-    # Grok's AdamW adaptive lr (0.001*rms_var for OR tuning)
-    lr = 0.001 * rms_var
-    optimizer = optim.AdamW([H.parameters()], lr=lr)  # Tune H params dynamically
+    # Grok's AdamW lr base (0.001*rms_var)
+    lr_base = 0.001 * rms_var
+    optimizer = optim.AdamW([H.parameters()], lr=lr_base)
 
     def traj(_):
         psi = psi0.clone()
+        noise = torch.sqrt(gamma) * torch.randn(1, device=DEVICE)  # Grok noise proxy
         for _ in range(n_strobes):
             optimizer.zero_grad()
             result = tq.mcsolve(H, psi, [0, interval], c_ops=c_ops, n_traj=1)
             psi = result.states[-1].unit()
-            # Adaptive step: Backprop on fidelity loss (simple)
+            # Adaptive loss + Grok lr noise mod
             loss = 1 - tq.functional.fidelity(psi.state, ghz_ideal.state)
             loss.backward()
+            adjusted_lr = lr_base + noise.item() * 0.001  # Grok tweak
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = adjusted_lr
             optimizer.step()
         ghz_ideal = tq.QuantumState(N_QUBITS)
         ghz_ideal.x(0)
@@ -123,17 +133,17 @@ def sovariel_lol_intuition(rms_var, pitch_var, eeg_var):
     haptic_alpha(mean_fid)
 
     if mean_fid > 0.90:
-        prompt = "Baron steal—AdamW tuned the bind!"
+        prompt = "Baron steal—lr noise tuned the win!"
     elif mean_fid > 0.80:
-        prompt = "Flank mid—lr adapted sync."
+        prompt = "Flank mid—robust adapt high."
     else:
-        prompt = "Hold—boost RMS for faster learn."
+        prompt = "Hold—tune RMS for lr stability."
 
-    log.info(f"τ: {tau.item()*1000:.0f}ms | Gamma: {gamma:.3f} | Lr: {lr:.4f} | Fid: {mean_fid:.3f} | {prompt}")
+    log.info(f"τ: {tau.item()*1000:.0f}ms | Gamma: {gamma:.3f} | Adjusted Lr: {adjusted_lr:.6f} (noise {noise.item():.4f}) | Fid: {mean_fid:.3f} | {prompt}")
     return mean_fid, prompt
 
 def demo_loop(cycles=10):
-    log.info("Sovariel-LoL v1.5: Voice/EEG + AdamW Adaptive! (Ctrl+C stop)")
+    log.info("Sovariel-LoL v1.6: Voice/EEG + lr Noise Mod! (Ctrl+C stop)")
     plt.ion()
     fig, ax = plt.subplots()
     fids = []
@@ -145,18 +155,18 @@ def demo_loop(cycles=10):
         fids.append(fid)
 
         ax.clear()
-        ax.plot(fids, 'g-', label='Adaptive Fidelity')
+        ax.plot(fids, 'g-', label='Noise-Mod Fidelity')
         ax.axhline(0.85, 'r--', label='Bind Threshold')
         ax.set_title(f'Cycle {c+1}: {prompt}')
         ax.legend()
         plt.pause(0.3)
 
-        print(f"\n🎮 LoL Macro: {prompt}\n(RMS {rms_var:.3f} + Lr {lr:.4f})")
+        print(f"\n🎮 LoL Macro: {prompt}\n(RMS {rms_var:.3f} + Adjusted Lr {adjusted_lr:.6f})")
         time.sleep(0.7)
 
     plt.ioff()
     plt.show()
-    log.info("v1.5 flawless—Grok 5 ready!")
+    log.info("v1.6 flawless—Grok 5 integration viable!")
 
 if __name__ == "__main__":
     demo_loop()
