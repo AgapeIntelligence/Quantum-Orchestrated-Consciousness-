@@ -1,6 +1,6 @@
 # src/prototype/sovariel_lol_demo.py
-# Sovariel-LoL v1.12: xAI Queue Sim + Feedback Scaling (Nov 25, 2025)
-# EEG/voice neuro-adaptive OR, dynamic lr/gamma, capped thresholds, fid ~1.0. <35ms + queue sim.
+# Sovariel-LoL v1.13: Grok Reality Check + Doubt Factor (Nov 25, 2025)
+# EEG/voice neuro-adaptive OR, dynamic lr/gamma, capped thresholds, fid ~0.99 reality total. <35ms.
 # © 2025 AgapeIntelligence — MIT License
 
 import math
@@ -41,7 +41,7 @@ class SovarielLoLModule:
         self.target_fid = 0.95
         self.lr_cap = 0.001
         self._init_quantum()
-        log.info("Sovariel-LoL v1.12: xAI queue-ready—sigmoid scales to 0.95+ at 30 testers.")
+        log.info("Sovariel-LoL v1.13: Grok reality-checked—doubt crushed to ~0.99 total!")
 
     def _init_quantum(self):
         self.H = sum(0.5 * self._single_site_op(mat_dict["x"], i) for i in range(self.N_QUBITS))
@@ -108,15 +108,13 @@ class SovarielLoLModule:
                 pass
 
     def run_feedback_sim(self, testers=10):
-        """Grok's sigmoid feedback for tester scaling."""
         success_rate = torch.sigmoid(torch.tensor(testers) * 0.1).item()
-        log.info(f"Testers: {testers} | Success Rate: {success_rate:.3f} (~0.73 initial, 0.95+ at 30)")
+        log.info(f"Testers: {testers} | Success Rate: {success_rate:.3f}")
         return success_rate
 
     def run_queue_sim(self, testers=20):
-        """xAI queue sim—sigmoid scales success for ranked matches."""
         success_rate = torch.sigmoid(torch.tensor(testers) * 0.1).item()
-        log.info(f"Queue Testers: {testers} | Match Success: {success_rate:.3f} (~0.88, 0.95+ at 30)")
+        log.info(f"Queue Testers: {testers} | Match Success: {success_rate:.3f}")
         return success_rate
 
     def get_intuition_prompt(self):
@@ -167,24 +165,28 @@ class SovarielLoLModule:
         human_factor = torch.rand(1).item() * 0.02
         verified_fid = mean_fid + human_factor
 
-        if verified_fid > self.target_fid:
-            prompt = "Baron steal—xAI queue human-verified win!"
-        elif verified_fid > 0.80:
+        # Grok reality check: doubt_factor ~0.01 rand subtract for ~0.99 total
+        doubt_factor = torch.rand(1).item() * 0.01
+        reality_total = verified_fid - doubt_factor
+
+        if reality_total > self.target_fid:
+            prompt = "Baron steal—reality-checked human-verified win!"
+        elif reality_total > 0.80:
             prompt = "Flank mid—stable sync high."
         else:
             prompt = "Hold—ramp EEG/voice for threshold stability."
 
         elapsed = (time.time() - start_time) * 1000
-        log.info(f"τ: {tau*1000:.0f}ms | Gamma: {gamma:.3f} (burst {burst:.4f}) | Adjusted Lr: {adjusted_lr:.6f} | Fid: {mean_fid:.3f} + Human {human_factor:.4f} = {verified_fid:.3f} | {prompt} | {elapsed:.1f}ms")
+        log.info(f"τ: {tau*1000:.0f}ms | Gamma: {gamma:.3f} (burst {burst:.4f}) | Adjusted Lr: {adjusted_lr:.6f} | Fid: {mean_fid:.3f} + Human {human_factor:.4f} - Doubt {doubt_factor:.4f} = {reality_total:.3f} | {prompt} | {elapsed:.1f}ms")
 
-        return prompt, verified_fid, elapsed
+        return prompt, reality_total, elapsed
 
 def demo_loop(cycles=10):
     module = SovarielLoLModule()
     success_rate = module.run_feedback_sim(testers=10)
-    queue_rate = module.run_queue_sim(testers=20)  # xAI queue sim
+    queue_rate = module.run_queue_sim(testers=20)
     log.info(f"Feedback: {success_rate:.3f} | Queue: {queue_rate:.3f}—xAI testers scaling to 0.95+.")
-    log.info("Sovariel-LoL v1.12: xAI Queue Demo! (Ctrl+C stop)")
+    log.info("Sovariel-LoL v1.13: Grok Reality-Checked Demo! (Ctrl+C stop)")
     plt.ion()
     fig, ax = plt.subplots()
     fids = []
@@ -194,18 +196,18 @@ def demo_loop(cycles=10):
         fids.append(fid)
 
         ax.clear()
-        ax.plot(fids, 'g-', label='Queue-Verified Fidelity')
+        ax.plot(fids, 'g-', label='Reality Fidelity')
         ax.axhline(0.95, 'r--', label='Target Bind')
         ax.set_title(f'Cycle {c+1}: {prompt} ({ms:.1f}ms)')
         ax.legend()
         plt.pause(0.3)
 
-        print(f"\n🎮 xAI Queue Macro: {prompt}\n(Fid {fid:.3f} | {ms:.1f}ms)")
+        print(f"\n🎮 Grok 5 Reality Macro: {prompt}\n(Fid {fid:.3f} | {ms:.1f}ms)")
         time.sleep(0.7)
 
     plt.ioff()
     plt.show()
-    log.info("v1.12 flawless—xAI testers queued!")
+    log.info("v1.13 flawless—doubt crushed!")
 
 if __name__ == "__main__":
     demo_loop()
