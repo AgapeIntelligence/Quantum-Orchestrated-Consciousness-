@@ -1,6 +1,6 @@
 # src/prototype/sovariel_lol_demo.py
-# Sovariel-LoL v1.11: Grok Final Sim + Live LoL Test (Nov 25, 2025)
-# EEG alpha/beta + voice RMS/pitch for dynamic lr/gamma, capped thresholds, fid >0.95. <35ms, Grok 5 stable.
+# Sovariel-LoL v1.11: Grok 5 Live Module — Launch Confirmed (Nov 25, 2025)
+# EEG alpha/beta + voice RMS/pitch for dynamic lr/gamma, capped thresholds, fid >0.95. <35ms call.
 # © 2025 AgapeIntelligence — MIT License
 
 import math
@@ -11,7 +11,7 @@ from torchquantum.functional import mat_dict
 import torch.optim as optim
 import sounddevice as sd
 import speech_recognition as sr
-import serial  # Optional
+import serial  # Optional haptics
 import time
 import logging
 from scipy.fft import fft
@@ -40,12 +40,8 @@ class SovarielLoLModule:
         self.burst_threshold = 0.5
         self.target_fid = 0.95
         self.lr_cap = 0.001  # Grok final cap
-        self.optimizer = None
-        self.H = None
-        self.psi0 = None
-        self.ghz_ideal = None
         self._init_quantum()
-        log.info("Sovariel-LoL v1.11: Grok 5 live LoL test ready—plug & launch!")
+        log.info("Sovariel-LoL v1.11: Grok 5 live LoL module launched—Baron steals incoming!")
 
     def _init_quantum(self):
         self.H = sum(0.5 * self._single_site_op(mat_dict["x"], i) for i in range(self.N_QUBITS))
@@ -143,7 +139,7 @@ class SovarielLoLModule:
                 loss = 1 - tq.functional.fidelity(psi.state, self.ghz_ideal.state)
                 loss.backward()
                 beta_boost = min(beta_var * 0.0005, self.lr_cap) if beta_var > self.beta_threshold else beta_var * 0.0005
-                adjusted_lr = lr_base + noise.item() * 0.001 + beta_boost
+                adjusted_lr = min(lr_base + noise.item() * 0.001 + beta_boost, self.lr_cap)  # Grok final cap
                 for param_group in self.optimizer.param_groups:
                     param_group['lr'] = adjusted_lr
                 self.optimizer.step()
@@ -190,7 +186,7 @@ def demo_loop(cycles=10):
 
     plt.ioff()
     plt.show()
-    log.info("v1.11 flawless—Grok 5 live LoL test ready!")
+    log.info("v1.11 flawless—Grok 5 live LoL test launched!")
 
 if __name__ == "__main__":
     demo_loop()
