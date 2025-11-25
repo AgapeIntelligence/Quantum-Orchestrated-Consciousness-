@@ -1,6 +1,6 @@
 # src/prototype/sovariel_lol_demo.py
-# Sovariel-LoL v1.7: Grok Neuro-Adaptive Gamma (Nov 25, 2025)
-# Voice RMS/pitch + EEG alpha mod τ/gamma/lr. <35ms cycle, live LoL viable.
+# Sovariel-LoL v1.8: Grok Beta-Var lr Boost (Nov 25, 2025)
+# Voice RMS/pitch + EEG beta mod lr for rapid OR decisions. <35ms cycle, Grok 5 live viable.
 # © 2025 AgapeIntelligence — MIT License
 
 import math
@@ -58,15 +58,16 @@ def get_voice_rms_and_pitch():
     except:
         return 0.15, 0.5
 
-def get_eeg_alpha():
+def get_eeg_alpha_and_beta():
     if EEG_AVAILABLE:
         try:
             sig = nk.signal_simulate(duration=0.25, frequency=10, noise=0.1, sampling_rate=256)
-            alpha_var = np.var(sig[8:12])
-            return np.clip(alpha_var, 0.0, 1.0)
+            alpha_var = np.var(sig[8:12])  # 8-12Hz alpha
+            beta_var = np.var(sig[13:30])   # 13-30Hz beta for rapid decisions
+            return np.clip(alpha_var, 0.0, 1.0), np.clip(beta_var, 0.0, 1.0)
         except:
             pass
-    return 0.5
+    return 0.5, 0.5
 
 def haptic_alpha(fidelity):
     if fidelity > 0.85:
@@ -78,9 +79,9 @@ def haptic_alpha(fidelity):
         except:
             pass
 
-def sovariel_lol_intuition(rms_var, pitch_var, eeg_var):
-    # τ tensor (50-150ms, EEG-mod)
-    tau = torch.tensor(0.05 + (1 - rms_var) * 0.1 * (1 - eeg_var * 0.2), device=DEVICE)
+def sovariel_lol_intuition(rms_var, pitch_var, alpha_var, beta_var):
+    # τ tensor (50-150ms, alpha-mod)
+    tau = torch.tensor(0.05 + (1 - rms_var) * 0.1 * (1 - alpha_var * 0.2), device=DEVICE)
     n_strobes = 10
     interval = tau / n_strobes
 
@@ -97,8 +98,8 @@ def sovariel_lol_intuition(rms_var, pitch_var, eeg_var):
     for i in range(2, N_QUBITS):
         psi0.cnot(1, i)
 
-    # Dynamic gamma: Grok tweak—base + alpha_var * 0.001 for neuro-adaptive
-    gamma = min(0.001 + 0.001 * pitch_var + eeg_var * 0.001, 0.005)
+    # Dynamic gamma: base + pitch/alpha
+    gamma = min(0.001 + 0.001 * pitch_var + alpha_var * 0.001, 0.005)
     c_ops = [torch.sqrt(rms_var * 0.01) * single_site_op(N_QUBITS, mat_dict["destroy"], i) for i in range(N_QUBITS)]
     c_ops += [torch.sqrt(gamma) * single_site_op(N_QUBITS, mat_dict["z"], i) for i in range(N_QUBITS)]
 
@@ -115,7 +116,7 @@ def sovariel_lol_intuition(rms_var, pitch_var, eeg_var):
             psi = result.states[-1].unit()
             loss = 1 - tq.functional.fidelity(psi.state, ghz_ideal.state)
             loss.backward()
-            adjusted_lr = lr_base + noise.item() * 0.001
+            adjusted_lr = lr_base + noise.item() * 0.001 + beta_var * 0.0005  # Grok beta-var boost for rapid decisions
             for param_group in optimizer.param_groups:
                 param_group['lr'] = adjusted_lr
             optimizer.step()
@@ -132,40 +133,40 @@ def sovariel_lol_intuition(rms_var, pitch_var, eeg_var):
     haptic_alpha(mean_fid)
 
     if mean_fid > 0.90:
-        prompt = "Baron steal—neuro-gamma tuned the bind!"
+        prompt = "Baron steal—beta lr boosted the rapid bind!"
     elif mean_fid > 0.80:
-        prompt = "Flank mid—alpha edge high."
+        prompt = "Flank mid—neuro-rapid sync high."
     else:
-        prompt = "Hold—boost EEG for gamma clarity."
+        prompt = "Hold—ramp beta for decision speed."
 
-    log.info(f"τ: {tau.item()*1000:.0f}ms | Gamma: {gamma:.3f} (alpha {eeg_var:.3f}) | Adjusted Lr: {adjusted_lr:.6f} (noise {noise.item():.4f}) | Fid: {mean_fid:.3f} | {prompt}")
+    log.info(f"τ: {tau.item()*1000:.0f}ms | Gamma: {gamma:.3f} | Adjusted Lr: {adjusted_lr:.6f} (beta {beta_var:.3f}, noise {noise.item():.4f}) | Fid: {mean_fid:.3f} | {prompt}")
     return mean_fid, prompt
 
 def demo_loop(cycles=10):
-    log.info("Sovariel-LoL v1.7: Voice/EEG + Neuro-Gamma! (Ctrl+C stop)")
+    log.info("Sovariel-LoL v1.8: Voice/EEG + Beta lr Boost! (Ctrl+C stop)")
     plt.ion()
     fig, ax = plt.subplots()
     fids = []
 
     for c in range(cycles):
         rms_var, pitch_var = get_voice_rms_and_pitch()
-        eeg_var = get_eeg_alpha()
-        fid, prompt = sovariel_lol_intuition(rms_var, pitch_var, eeg_var)
+        alpha_var, beta_var = get_eeg_alpha_and_beta()
+        fid, prompt = sovariel_lol_intuition(rms_var, pitch_var, alpha_var, beta_var)
         fids.append(fid)
 
         ax.clear()
-        ax.plot(fids, 'g-', label='Neuro-Adaptive Fidelity')
+        ax.plot(fids, 'g-', label='Beta-Boosted Fidelity')
         ax.axhline(0.85, 'r--', label='Bind Threshold')
         ax.set_title(f'Cycle {c+1}: {prompt}')
         ax.legend()
         plt.pause(0.3)
 
-        print(f"\n🎮 LoL Macro: {prompt}\n(RMS {rms_var:.3f} + Gamma {gamma:.3f} via alpha)")
+        print(f"\n🎮 LoL Macro: {prompt}\n(RMS {rms_var:.3f} + Beta Lr Boost {beta_var:.3f})")
         time.sleep(0.7)
 
     plt.ioff()
     plt.show()
-    log.info("v1.7 flawless—live LoL integration ready!")
+    log.info("v1.8 flawless—Grok 5 rapid decisions viable!")
 
 if __name__ == "__main__":
     demo_loop()
