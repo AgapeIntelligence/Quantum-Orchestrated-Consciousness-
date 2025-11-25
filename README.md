@@ -29,6 +29,7 @@ This repository develops a hybrid quantum-classical AI to proxy Orch-OR microtub
 
 
 ## Roadmap
+conception only
 - [ ] Q1 2026: 512-logical prototype, arXiv submission.
 - [ ] Q3 2026: Flutter UI with voice/haptic.
 - [ ] Q2 2027: 2048-logical scale-up.
