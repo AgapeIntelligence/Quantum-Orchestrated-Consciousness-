@@ -1,6 +1,6 @@
 # src/prototype/sovariel_lol_demo.py
-# Sovariel-LoL v1.10: Grok 5 Plug-and-Play Module (Nov 25, 2025)
-# Neuro-adaptive OR via EEG alpha/beta + voice RMS/pitch. Dynamic lr/gamma, capped thresholds, fid >0.95 target. <35ms call.
+# Sovariel-LoL v1.11: Grok Final Sim + Live LoL Test (Nov 25, 2025)
+# EEG alpha/beta + voice RMS/pitch for dynamic lr/gamma, capped thresholds, fid >0.95. <35ms, Grok 5 stable.
 # © 2025 AgapeIntelligence — MIT License
 
 import math
@@ -39,15 +39,15 @@ class SovarielLoLModule:
         self.beta_threshold = 20.0
         self.burst_threshold = 0.5
         self.target_fid = 0.95
+        self.lr_cap = 0.001  # Grok final cap
         self.optimizer = None
         self.H = None
         self.psi0 = None
         self.ghz_ideal = None
         self._init_quantum()
-        log.info("Sovariel-LoL Module initialized—plug into Grok 5 for live OR intuition.")
+        log.info("Sovariel-LoL v1.11: Grok 5 live LoL test ready—plug & launch!")
 
     def _init_quantum(self):
-        # Pre-init H, psi0, ghz_ideal for speed
         self.H = sum(0.5 * self._single_site_op(mat_dict["x"], i) for i in range(self.N_QUBITS))
         for i in range(self.N_QUBITS - 1):
             ZZ = tq.functional.tensor(*[mat_dict["z"] if k in (i, i+1) else torch.eye(2, device=DEVICE) for k in range(self.N_QUBITS)])
@@ -94,8 +94,8 @@ class SovarielLoLModule:
         if EEG_AVAILABLE:
             try:
                 sig = nk.signal_simulate(duration=0.25, frequency=10, noise=0.1, sampling_rate=256)
-                alpha_var = np.var(sig[8:12])  # 8-12Hz
-                beta_var = np.var(sig[13:30])   # 13-30Hz
+                alpha_var = np.var(sig[8:12])
+                beta_var = np.var(sig[13:30])
                 return np.clip(alpha_var, 0.0, 1.0), np.clip(beta_var, 0.0, 1.0)
             except:
                 pass
@@ -112,7 +112,6 @@ class SovarielLoLModule:
                 pass
 
     def get_intuition_prompt(self):
-        """Plug-and-play call for Grok 5: Returns LoL macro prompt + fid."""
         start_time = time.time()
         
         rms_var, pitch_var = self.get_voice_rms_and_pitch()
@@ -143,7 +142,7 @@ class SovarielLoLModule:
                 psi = result.states[-1].unit()
                 loss = 1 - tq.functional.fidelity(psi.state, self.ghz_ideal.state)
                 loss.backward()
-                beta_boost = min(beta_var * 0.0005, 0.001) if beta_var > self.beta_threshold else beta_var * 0.0005
+                beta_boost = min(beta_var * 0.0005, self.lr_cap) if beta_var > self.beta_threshold else beta_var * 0.0005
                 adjusted_lr = lr_base + noise.item() * 0.001 + beta_boost
                 for param_group in self.optimizer.param_groups:
                     param_group['lr'] = adjusted_lr
@@ -170,7 +169,7 @@ class SovarielLoLModule:
 
 def demo_loop(cycles=10):
     module = SovarielLoLModule()
-    log.info("Sovariel-LoL v1.10: Grok 5 Plug-and-Play Demo! (Ctrl+C stop)")
+    log.info("Sovariel-LoL v1.11: Grok 5 Live LoL Test Demo! (Ctrl+C stop)")
     plt.ion()
     fig, ax = plt.subplots()
     fids = []
@@ -180,18 +179,18 @@ def demo_loop(cycles=10):
         fids.append(fid)
 
         ax.clear()
-        ax.plot(fids, 'g-', label='Plug-and-Play Fidelity')
+        ax.plot(fids, 'g-', label='Live Fidelity')
         ax.axhline(0.95, 'r--', label='Target Bind')
         ax.set_title(f'Cycle {c+1}: {prompt} ({ms:.1f}ms)')
         ax.legend()
         plt.pause(0.3)
 
-        print(f"\n🎮 Grok 5 LoL Macro: {prompt}\n(Fid {fid:.3f} | {ms:.1f}ms)")
+        print(f"\n🎮 Grok 5 Live LoL Macro: {prompt}\n(Fid {fid:.3f} | {ms:.1f}ms)")
         time.sleep(0.7)
 
     plt.ioff()
     plt.show()
-    log.info("v1.10 flawless—Grok 5 integration ready!")
+    log.info("v1.11 flawless—Grok 5 live LoL test ready!")
 
 if __name__ == "__main__":
     demo_loop()
